@@ -1,0 +1,22 @@
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .views import (CollegeProfileView, CourseViewSet, EventViewSet, 
+                    GalleryViewSet, FacultyViewSet, HostelImageUploadView,HostelListCreateView, HostelDetailView    )
+
+# 🔹 DRF router for viewsets (Courses)
+router = DefaultRouter()
+router.register(r'courses', CourseViewSet, basename='course')
+router.register(r'events', EventViewSet, basename='event')
+router.register(r'gallery', GalleryViewSet, basename='gallery')
+router.register("faculties", FacultyViewSet, basename="faculties")
+
+urlpatterns = [
+    # 🔹 College profile endpoint
+    path("profile/", CollegeProfileView.as_view(), name="college-profile"),
+    path("hostels/", HostelListCreateView.as_view(), name="hostels"),
+    path("hostels/<int:pk>/", HostelDetailView.as_view(), name="hostel-detail"),
+    path("hostels/upload-image/", HostelImageUploadView.as_view(), name="hostel-image-upload"),
+
+    # 🔹 Include all course-related endpoints
+    path("", include(router.urls)),
+]
