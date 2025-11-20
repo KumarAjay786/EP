@@ -2,6 +2,8 @@ from django.db import models
 from django.conf import settings
 from django.core.validators import MinValueValidator, MaxValueValidator
 
+
+
 class CollegeProfile(models.Model):
     user = models.OneToOneField(
         settings.AUTH_USER_MODEL,
@@ -71,15 +73,32 @@ class CollegeProfile(models.Model):
 
     def __str__(self):
         return self.college_name
-from django.db import models
-from django.core.validators import MinValueValidator
-from College.models import CollegeProfile  # adjust path if needed
+
 
 
 class Course(models.Model):
     COURSE_LEVEL_CHOICES = [
         ('undergraduate', 'Undergraduate'),
         ('postgraduate', 'Postgraduate'),
+    ]
+    
+    MAIN_STREAM_CHOICES = [
+        ('engineering', 'Engineering'),
+        ('law', 'Law'),
+        ('finance', 'Finance'),
+        ('medical', 'Medical'),
+        ('arts', 'Arts'),
+        # Add more as needed
+    ]
+
+    DEGREE_CHOICES = [
+        ('btech', 'B.Tech'),
+        ('mtech', 'M.Tech'),
+        ('ba', 'BA'),
+        ('llb', 'LLB'),
+        ('mba', 'MBA'),
+        ('mbbs', 'MBBS'),
+        # Add more as relevant for your catalog
     ]
 
     college = models.ForeignKey(
@@ -88,8 +107,8 @@ class Course(models.Model):
         related_name='courses',
         to_field='college_code'
     )
-
-    name = models.CharField(max_length=255)
+    main_stream = models.CharField(max_length=50, choices=MAIN_STREAM_CHOICES)
+    degree = models.CharField(max_length=50,default= "B.Tech",choices=DEGREE_CHOICES)
     level = models.CharField(max_length=20, choices=COURSE_LEVEL_CHOICES)
     specialization = models.CharField(max_length=255, blank=True, null=True)
     duration = models.CharField(max_length=100, help_text="e.g., '4 Years', '2 Years'")
@@ -108,12 +127,12 @@ class Course(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ['level', 'name']
-        unique_together = ['college', 'name', 'specialization']
+        ordering = ['degree', 'specialization']
+        unique_together = ['college', 'degree', 'specialization', 'level']
 
     def __str__(self):
         spec = f" - {self.specialization}" if self.specialization else ""
-        return f"{self.name}{spec} ({self.college.college_name})"
+        return f"{self.get_degree_display()}{spec} ({self.college.college_name})"
 
 class Event(models.Model):
     college = models.ForeignKey(CollegeProfile, on_delete=models.CASCADE, related_name="events")

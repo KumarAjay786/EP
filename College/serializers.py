@@ -10,6 +10,9 @@ class CollegeProfileSerializer(serializers.ModelSerializer):
     verified = serializers.BooleanField(read_only=True)
     approved_by = serializers.StringRelatedField(read_only=True)
     approved_at = serializers.DateTimeField(read_only=True)
+    
+    # Dynamically get main streams from related courses
+    main_streams = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = CollegeProfile
@@ -47,6 +50,7 @@ class CollegeProfileSerializer(serializers.ModelSerializer):
             "approved_at",
             "is_popular",
             "is_featured",
+            "main_streams",
             "created_at",
             "updated_at",
         ]
@@ -57,9 +61,15 @@ class CollegeProfileSerializer(serializers.ModelSerializer):
             "approved_at",
             "is_popular",
             "is_featured",
+            "main_streams",
             "created_at",
             "updated_at",
         ]
+    
+    def get_main_streams(self, obj):
+        """Get unique main streams from related courses"""
+        main_streams = obj.courses.values_list('main_stream', flat=True).distinct()
+        return list(main_streams)
 
     def create(self, validated_data):
         """Create college profile and mark profile complete if valid."""
@@ -83,10 +93,11 @@ class CourseSerializer(serializers.ModelSerializer):
         model = Course
         fields = [
             'id',
-            'college',          # when creating, pass the college_code here
+            'college',
             'college_code',
             'college_name',
-            'name',
+            'main_stream',
+            'degree',
             'level',
             'specialization',
             'duration',

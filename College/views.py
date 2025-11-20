@@ -8,6 +8,7 @@ from rest_framework.decorators import action
 from django.shortcuts import get_object_or_404
 from django.core.files.storage import default_storage
 from College import serializers
+from django_filters.rest_framework import DjangoFilterBackend
 
 
 
@@ -74,36 +75,115 @@ class CollegeProfileView(generics.RetrieveUpdateAPIView):
             )
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+
+class CollegeListView(generics.ListAPIView):
+    """
+    List and filter colleges with comprehensive filtering options.
+    
+    Colleges are automatically categorized by the main_stream of courses they offer.
+    A college offering engineering AND medical courses will appear when filtering 
+    by either 'engineering' OR 'medical'.
+    
+    Supported Filters:
+    - country: Filter by country (case-insensitive substring match)
+    - state: Filter by state (case-insensitive substring match)
+    - district: Filter by district (case-insensitive substring match)
+    - main_stream: Filter colleges by courses' main stream (engineering, law, finance, medical, arts)
+      (e.g., ?main_stream=engineering returns all colleges offering engineering courses)
+    - college_type: Filter by college type (government, private, autonomous)
+    - verified: Filter by verification status (true/false)
+    - is_popular: Filter by popular status (true/false)
+    - is_featured: Filter by featured status (true/false)
+    
+    Example queries:
+    - /api/colleges/list/?country=India&state=California
+    - /api/colleges/list/?main_stream=engineering&college_type=private
+    - /api/colleges/list/?state=Tamil+Nadu&verified=true
+    - /api/colleges/list/?district=Chennai&main_stream=medical
+    - /api/colleges/list/?main_stream=arts&is_popular=true
+    """
+    serializer_class = CollegeProfileSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    
+    # Define filterable fields
+    filterset_fields = {
+        'country': ['icontains'],
+        'state': ['icontains'],
+        'district': ['icontains'],
+        'college_type': ['exact'],
+        'verified': ['exact'],
+        'is_popular': ['exact'],
+        'is_featured': ['exact'],
+    }
+    
+    # Search fields
+    search_fields = ['college_name', 'country', 'state', 'district', 'about_college']
+    
+    # Ordering fields
+    ordering_fields = ['college_name', 'created_at', 'is_popular', 'is_featured']
+    ordering = ['-created_at']
+    
+    def get_queryset(self):
+        """
+        Filter colleges dynamically, including by courses' main_stream.
+        """
+        queryset = CollegeProfile.objects.distinct()
+        
+        # Handle main_stream filter (filter by related courses' main_stream)
+        main_stream = self.request.query_params.get('main_stream')
+        if main_stream:
+            queryset = queryset.filter(courses__main_stream=main_stream).distinct()
+        
+        return queryset
+
+
 class CourseViewSet(viewsets.ModelViewSet):
     """
     Manage all courses (CRUD)
-    - Supports filtering by college_code, level, specialization
-    - Allows nested access like /api/courses/?college=C40B2C92D3
+    
+    Supported Filters:
+    - level: Filter by course level (undergraduate, postgraduate)
+    - degree: Filter by degree type (btech, mtech, ba, llb, mba, mbbs)
+    - main_stream: Filter by main stream (engineering, law, finance, medical, arts)
+    - specialization: Filter by specialization (case-insensitive substring match)
+    - college__college_code: Filter by college code
+    - college__country: Filter by college country
+    - college__state: Filter by college state
+    - college__district: Filter by college district
+    - fee__lte: Filter courses with fee less than or equal to value
+    - fee__gte: Filter courses with fee greater than or equal to value
+    
+    Example queries:
+    - /api/courses/?level=undergraduate&main_stream=engineering
+    - /api/courses/?degree=btech&college__state=California
+    - /api/courses/?specialization=computer&fee__lte=100000
+    - /api/courses/?college__country=India&main_stream=medical
     """
     serializer_class = CourseSerializer
     queryset = Course.objects.all().select_related('college')
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
-    filter_backends = [filters.SearchFilter, filters.OrderingFilter]
-    search_fields = ['name', 'specialization', 'college__college_name']
-    ordering_fields = ['created_at', 'fee', 'duration']
-
-    def get_queryset(self):
-        """
-        Filter courses dynamically by college_code or level
-        """
-        queryset = super().get_queryset()
-        college_code = self.request.query_params.get('college')
-        level = self.request.query_params.get('level')
-        specialization = self.request.query_params.get('specialization')
-
-        if college_code:
-            queryset = queryset.filter(college__college_code=college_code)
-        if level:
-            queryset = queryset.filter(level=level)
-        if specialization:
-            queryset = queryset.filter(specialization__icontains=specialization)
-
-        return queryset
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    
+    # Define filterable fields
+    filterset_fields = {
+        'level': ['exact'],
+        'degree': ['exact'],
+        'main_stream': ['exact'],
+        'specialization': ['icontains'],
+        'college__college_code': ['exact'],
+        'college__country': ['icontains'],
+        'college__state': ['icontains'],
+        'college__district': ['icontains'],
+        'fee': ['lte', 'gte'],
+    }
+    
+    # Search fields
+    search_fields = ['specialization', 'college__college_name', 'description']
+    
+    # Ordering fields
+    ordering_fields = ['created_at', 'fee', 'duration', 'degree']
+    ordering = ['-created_at']
 
     def create(self, request, *args, **kwargs):
         """
