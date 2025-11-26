@@ -8,7 +8,9 @@ from rest_framework.decorators import action
 from django.shortcuts import get_object_or_404
 from django.core.files.storage import default_storage
 from College import serializers
-from django_filters.rest_framework import DjangoFilterBackend
+from django_filters.rest_framework import DjangoFilterBackend, FilterSet, CharFilter, BooleanFilter
+from .permissions import IsCollegeOwner, IsCollegeOwnerOrReadOnly, IsCollegeAdminOrReadOnly
+import django_filters
 
 
 
@@ -76,6 +78,41 @@ class CollegeProfileView(generics.RetrieveUpdateAPIView):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+class CollegeFilterSet(FilterSet):
+    """
+    Custom FilterSet for comprehensive college filtering by location, courses, and status.
+    
+    Supports filtering by:
+    - Location: country, state, district
+    - Course details: main_stream, degree, level, specialization
+    - Status: verified, is_popular, is_featured
+    """
+    # Location filters
+    country = CharFilter(field_name='country', lookup_expr='icontains')
+    state = CharFilter(field_name='state', lookup_expr='icontains')
+    district = CharFilter(field_name='district', lookup_expr='icontains')
+    
+    # College info filters
+    college_type = CharFilter(field_name='college_type', lookup_expr='exact')
+    accreditation_body = CharFilter(field_name='accreditation_body', lookup_expr='icontains')
+    
+    # Course-related filters
+    main_stream = CharFilter(field_name='courses__main_stream', lookup_expr='exact', distinct=True)
+    degree = CharFilter(field_name='courses__degree', lookup_expr='exact', distinct=True)
+    level = CharFilter(field_name='courses__level', lookup_expr='exact', distinct=True)
+    specialization = CharFilter(field_name='courses__specialization', lookup_expr='icontains', distinct=True)
+    
+    # Status filters
+    verified = django_filters.BooleanFilter(field_name='verified')
+    is_popular = django_filters.BooleanFilter(field_name='is_popular')
+    is_featured = django_filters.BooleanFilter(field_name='is_featured')
+    
+    class Meta:
+        model = CollegeProfile
+        fields = ['country', 'state', 'district', 'college_type', 'accreditation_body', 
+                  'main_stream', 'degree', 'level', 'specialization', 'verified', 'is_popular', 'is_featured']
+
+
 class CollegeListView(generics.ListAPIView):
     """
     List and filter colleges with comprehensive filtering options.
@@ -85,84 +122,55 @@ class CollegeListView(generics.ListAPIView):
     by either 'engineering' OR 'medical'.
     
     Supported Filters:
-    - country: Filter by country (case-insensitive substring match)
-    - state: Filter by state (case-insensitive substring match)
-    - district: Filter by district (case-insensitive substring match)
-    - main_stream: Filter colleges by courses' main stream (engineering, law, finance, medical, arts)
-      (e.g., ?main_stream=engineering returns all colleges offering engineering courses)
-    - college_type: Filter by college type (government, private, autonomous)
-    - verified: Filter by verification status (true/false)
-    - is_popular: Filter by popular status (true/false)
-    - is_featured: Filter by featured status (true/false)
+    - location: district, state, country (by location)
+    - industry: main_stream (engineering, law, finance, medical, arts)
+    - course: degree, level, specialization (by course details)
+    - status: verified, is_popular, is_featured (by college status)
+    - college_type: government, private, autonomous
+    - accreditation_body: by accreditation body
     
     Example queries:
-    - /api/colleges/list/?country=India&state=California
+    - /api/colleges/list/?district=Chennai
     - /api/colleges/list/?main_stream=engineering&college_type=private
-    - /api/colleges/list/?state=Tamil+Nadu&verified=true
-    - /api/colleges/list/?district=Chennai&main_stream=medical
-    - /api/colleges/list/?main_stream=arts&is_popular=true
+    - /api/colleges/list/?state=Tamil+Nadu&is_popular=true
+    - /api/colleges/list/?district=Chennai&main_stream=medical&degree=MBBS
+    - /api/colleges/list/?level=undergraduate&specialization=Computer
+    - /api/colleges/list/?main_stream=engineering&is_featured=true&verified=true
+    - /api/colleges/list/?accreditation_body=AICTE&college_type=private
     """
     serializer_class = CollegeProfileSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    
-    # Define filterable fields
-    filterset_fields = {
-        'country': ['icontains'],
-        'state': ['icontains'],
-        'district': ['icontains'],
-        'college_type': ['exact'],
-        'verified': ['exact'],
-        'is_popular': ['exact'],
-        'is_featured': ['exact'],
-    }
+    filterset_class = CollegeFilterSet
     
     # Search fields
-    search_fields = ['college_name', 'country', 'state', 'district', 'about_college']
+    search_fields = ['college_name', 'country', 'state', 'district', 'about_college', 'accreditation_body']
     
     # Ordering fields
-    ordering_fields = ['college_name', 'created_at', 'is_popular', 'is_featured']
+    ordering_fields = ['college_name', 'created_at', 'is_popular', 'is_featured', 'established_year']
     ordering = ['-created_at']
     
     def get_queryset(self):
         """
-        Filter colleges dynamically, including by courses' main_stream.
+        Return distinct colleges to avoid duplicates when filtering by related course fields.
         """
-        queryset = CollegeProfile.objects.distinct()
-        
-        # Handle main_stream filter (filter by related courses' main_stream)
-        main_stream = self.request.query_params.get('main_stream')
-        if main_stream:
-            queryset = queryset.filter(courses__main_stream=main_stream).distinct()
-        
-        return queryset
+        return CollegeProfile.objects.distinct()
 
 
 class CourseViewSet(viewsets.ModelViewSet):
     """
-    Manage all courses (CRUD)
+    Manage courses - College admins can only see/edit their own courses
     
-    Supported Filters:
-    - level: Filter by course level (undergraduate, postgraduate)
-    - degree: Filter by degree type (btech, mtech, ba, llb, mba, mbbs)
-    - main_stream: Filter by main stream (engineering, law, finance, medical, arts)
-    - specialization: Filter by specialization (case-insensitive substring match)
-    - college__college_code: Filter by college code
-    - college__country: Filter by college country
-    - college__state: Filter by college state
-    - college__district: Filter by college district
-    - fee__lte: Filter courses with fee less than or equal to value
-    - fee__gte: Filter courses with fee greater than or equal to value
+    Authenticated college admins can:
+    - View only their own courses
+    - Create new courses for their college
+    - Edit/Delete only their own courses
     
-    Example queries:
-    - /api/courses/?level=undergraduate&main_stream=engineering
-    - /api/courses/?degree=btech&college__state=California
-    - /api/courses/?specialization=computer&fee__lte=100000
-    - /api/courses/?college__country=India&main_stream=medical
+    Other authenticated users can:
+    - View all courses (read-only)
     """
     serializer_class = CourseSerializer
-    queryset = Course.objects.all().select_related('college')
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsCollegeAdminOrReadOnly]
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     
     # Define filterable fields
@@ -184,40 +192,79 @@ class CourseViewSet(viewsets.ModelViewSet):
     # Ordering fields
     ordering_fields = ['created_at', 'fee', 'duration', 'degree']
     ordering = ['-created_at']
+    
+    def get_queryset(self):
+        """
+        Return courses based on user type:
+        - College admin: Only their own courses
+        - Other users: All courses (public view)
+        """
+        user = self.request.user
+        
+        if not user or not user.is_authenticated:
+            # Unauthenticated users see no courses
+            return Course.objects.none()
+        
+        # If user is a college admin, show only their courses
+        if getattr(user, 'user_type', None) == 'college':
+            try:
+                college = user.college_profile
+                return Course.objects.filter(college=college).select_related('college')
+            except CollegeProfile.DoesNotExist:
+                return Course.objects.none()
+        
+        # Other authenticated users can see all courses
+        return Course.objects.all().select_related('college')
 
     def create(self, request, *args, **kwargs):
         """
-        Create course using college_code instead of numeric ID
+        Create course - Only college admins can create, and only for their college
         """
-        college_code = request.data.get('college')
-
-        college = None
-        # If college code is provided, use it
-        if college_code:
-            try:
-                college = CollegeProfile.objects.get(college_code=college_code)
-            except CollegeProfile.DoesNotExist:
-                return Response({'error': 'Invalid college code.'}, status=status.HTTP_400_BAD_REQUEST)
-        else:
-            # If no college code provided, try to infer from authenticated college user
-            user = request.user
-            if user and user.is_authenticated and getattr(user, 'user_type', None) == 'college':
-                # get or create profile for user
-                college, _ = CollegeProfile.objects.get_or_create(
-                    user=user,
-                    defaults={
-                        'college_name': user.name or f"College_{user.id}",
-                        'email': user.email,
-                        'phone': user.phone,
-                    },
-                )
-            else:
-                return Response({'error': 'College code is required.'}, status=status.HTTP_400_BAD_REQUEST)
-
+        user = request.user
+        
+        # Check if user is a college admin
+        if not user or not user.is_authenticated or getattr(user, 'user_type', None) != 'college':
+            return Response(
+                {'error': 'Only college admins can create courses.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            college = user.college_profile
+        except CollegeProfile.DoesNotExist:
+            return Response(
+                {'error': 'You must have a college profile to create courses.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Create course with authenticated user's college
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         serializer.save(college=college)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    def perform_update(self, serializer):
+        """Ensure college admin can only update their own college's courses"""
+        user = self.request.user
+        course = self.get_object()
+        
+        if course.college.user != user:
+            raise permissions.PermissionDenied(
+                "You can only update courses for your own college."
+            )
+        
+        serializer.save()
+    
+    def perform_destroy(self, instance):
+        """Ensure college admin can only delete their own college's courses"""
+        user = self.request.user
+        
+        if instance.college.user != user:
+            raise permissions.PermissionDenied(
+                "You can only delete courses from your own college."
+            )
+        
+        instance.delete()
 
     @action(detail=False, methods=['get'], url_path='by-college/(?P<college_code>[^/.]+)')
     def by_college(self, request, college_code=None):
@@ -230,76 +277,205 @@ class CourseViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(courses, many=True)
         return Response(serializer.data)
 
-# -----------------------------
+# ===== EVENT VIEWSET =====
 
 class EventViewSet(viewsets.ModelViewSet):
+    """
+    Manage events - College admins can only see/edit their own events
+    
+    College admins can:
+    - View only their own events
+    - Create new events for their college
+    - Edit/Delete only their own events
+    """
     serializer_class = EventSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsCollegeAdminOrReadOnly]
 
     def get_queryset(self):
+        """
+        Return events based on user type:
+        - College admin: Only their own events
+        - Other users: All events (public view)
+        """
         user = self.request.user
-        college = getattr(user, "college_profile", None)
-        queryset = Event.objects.all()
-
-        # 🟢 Allow filtering by ?college=<id> or ?college=<code>
-        college_param = self.request.query_params.get("college")
-        if college_param:
-            if college_param.isdigit():
-                queryset = queryset.filter(college_id=college_param)  # if numeric -> use ID
-            else:
-                queryset = queryset.filter(college__code=college_param)  # if not numeric -> use code
-        elif college:
-            queryset = queryset.filter(college=college)
-
-        return queryset.order_by("-created_at")
-
+        
+        if not user or not user.is_authenticated:
+            return Event.objects.none()
+        
+        # If user is a college admin, show only their events
+        if getattr(user, 'user_type', None) == 'college':
+            try:
+                college = user.college_profile
+                return Event.objects.filter(college=college)
+            except CollegeProfile.DoesNotExist:
+                return Event.objects.none()
+        
+        # Other authenticated users can see all events
+        return Event.objects.all()
+    
     def perform_create(self, serializer):
-        college = serializer.validated_data.get("college")
-        if not college:
-            user_college = getattr(self.request.user, "college_profile", None)
-            if user_college:
-                serializer.save(college=user_college)
-            else:
-                raise serializers.ValidationError({"college": "College information missing."})
-        else:
-            serializer.save()
+        """Create event for authenticated college admin's college"""
+        user = self.request.user
+        
+        if not user or not user.is_authenticated or getattr(user, 'user_type', None) != 'college':
+            raise permissions.PermissionDenied(
+                "Only college admins can create events."
+            )
+        
+        try:
+            college = user.college_profile
+            serializer.save(college=college)
+        except CollegeProfile.DoesNotExist:
+            raise permissions.PermissionDenied(
+                "You must have a college profile to create events."
+            )
+    
+    def perform_update(self, serializer):
+        """Ensure college admin can only update their own events"""
+        user = self.request.user
+        event = self.get_object()
+        
+        if event.college.user != user:
+            raise permissions.PermissionDenied(
+                "You can only update events for your own college."
+            )
+        
+        serializer.save()
+    
+    def perform_destroy(self, instance):
+        """Ensure college admin can only delete their own events"""
+        user = self.request.user
+        
+        if instance.college.user != user:
+            raise permissions.PermissionDenied(
+                "You can only delete events from your own college."
+            )
+        
+        instance.delete()
+
+# ===== GALLERY VIEWSET =====
 
 class GalleryViewSet(viewsets.ModelViewSet):
-    queryset = Gallery.objects.all()
+    """
+    Manage gallery - College admins can only see/edit their own gallery
+    
+    College admins can:
+    - View only their own gallery items
+    - Upload new gallery items for their college
+    - Edit/Delete only their own gallery items
+    """
     serializer_class = GallerySerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsCollegeAdminOrReadOnly]
     parser_classes = [MultiPartParser, FormParser]
 
     def get_queryset(self):
-        user_college = getattr(self.request.user, "college_profile", None)
-
-        college_param = self.request.query_params.get("college")
-
-        if college_param:
-            if college_param.isdigit():
-                return Gallery.objects.filter(college_id=college_param)
-            return Gallery.objects.filter(college__code=college_param)
-
-        if user_college:
-            return Gallery.objects.filter(college=user_college)
-
-        return Gallery.objects.none()
-
+        """
+        Return gallery items based on user type:
+        - College admin: Only their own gallery
+        - Other users: All gallery (public view)
+        """
+        user = self.request.user
+        
+        if not user or not user.is_authenticated:
+            return Gallery.objects.none()
+        
+        # If user is a college admin, show only their gallery
+        if getattr(user, 'user_type', None) == 'college':
+            try:
+                college = user.college_profile
+                return Gallery.objects.filter(college=college)
+            except CollegeProfile.DoesNotExist:
+                return Gallery.objects.none()
+        
+        # Other authenticated users can see all gallery
+        return Gallery.objects.all()
+    
+    def perform_create(self, serializer):
+        """Create gallery item for authenticated college admin's college"""
+        user = self.request.user
+        
+        if not user or not user.is_authenticated or getattr(user, 'user_type', None) != 'college':
+            raise permissions.PermissionDenied(
+                "Only college admins can upload gallery items."
+            )
+        
+        try:
+            college = user.college_profile
+            serializer.save(college=college)
+        except CollegeProfile.DoesNotExist:
+            raise permissions.PermissionDenied(
+                "You must have a college profile to upload gallery items."
+            )
+    
+    def perform_update(self, serializer):
+        """Ensure college admin can only update their own gallery items"""
+        user = self.request.user
+        gallery = self.get_object()
+        
+        if gallery.college.user != user:
+            raise permissions.PermissionDenied(
+                "You can only update gallery items from your own college."
+            )
+        
+        serializer.save()
+    
+    def perform_destroy(self, instance):
+        """Ensure college admin can only delete their own gallery items"""
+        user = self.request.user
+        
+        if instance.college.user != user:
+            raise permissions.PermissionDenied(
+                "You can only delete gallery items from your own college."
+            )
+        
+        instance.delete()
+    
     def create(self, request, *args, **kwargs):
-        files = (
-            request.FILES.getlist("files")
-            or request.FILES.getlist("file")
-            or []
-        )
+        """Override create to use college from request.user"""
+        if not request.user or not request.user.is_authenticated:
+            return Response(
+                {'error': 'Authentication required.'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+        
+        return super().create(request, *args, **kwargs)
 
-        # single file fallback
-        if not files and "file" in request.FILES:
-            files = [request.FILES["file"]]
+# ===== FACULTY VIEWSET =====
 
-        if not files:
-            return Response({"detail": "No files uploaded."}, status=400)
+class FacultyViewSet(viewsets.ModelViewSet):
+    """
+    Manage faculty - College admins can only see/edit their own faculty
+    
+    College admins can:
+    - View only their own faculty members
+    - Create new faculty for their college
+    - Edit/Delete only their own faculty members
+    """
+    serializer_class = FacultySerializer
+    permission_classes = [IsCollegeAdminOrReadOnly]
+    parser_classes = [MultiPartParser, FormParser]
 
-        media_type = request.data.get("media_type", "image")
+    def get_queryset(self):
+        """
+        Return faculty based on user type:
+        - College admin: Only their own faculty
+        - Other users: All faculty (public view)
+        """
+        user = self.request.user
+        
+        if not user or not user.is_authenticated:
+            return Faculty.objects.none()
+        
+        # If user is a college admin, show only their faculty
+        if getattr(user, 'user_type', None) == 'college':
+            try:
+                college = user.college_profile
+                return Faculty.objects.filter(college=college)
+            except CollegeProfile.DoesNotExist:
+                return Faculty.objects.none()
+        
+        # Other authenticated users can see all faculty
+        return Faculty.objects.all()
         title = request.data.get("title", "")
         description = request.data.get("description", "")
 
@@ -309,71 +485,127 @@ class GalleryViewSet(viewsets.ModelViewSet):
         if not user_college:
             return Response({"detail": "User is not associated with any college."}, status=400)
 
-        created_items = []
-
-        for file in files:
-            serializer = self.get_serializer(data={
-                "media_type": media_type,
-                "file": file,
-                "title": title,
-                "description": description
-            })
-
-            # VALIDATE WITHOUT college (we add it later)
-            serializer.is_valid(raise_exception=True)
-
-            # NOW save with college
-            item = serializer.save(college=user_college)
-
-            created_items.append(self.get_serializer(item).data)
-
-        return Response(created_items, status=status.HTTP_201_CREATED)
-
-
-class FacultyViewSet(viewsets.ModelViewSet):
-    queryset = Faculty.objects.all()
-    serializer_class = FacultySerializer
-    permission_classes = [permissions.IsAuthenticated]
-    parser_classes = [MultiPartParser, FormParser]
-
-    def get_queryset(self):
-        user_college = getattr(self.request.user, "college_profile", None)
-
-        queryset = Faculty.objects.all()
-        if user_college:
-            queryset = queryset.filter(college=user_college)
-
-        return queryset.order_by("display_order", "name")
-
-    def create(self, request, *args, **kwargs):
-        user_college = getattr(request.user, "college_profile", None)
-
-        if not user_college:
-            return Response(
-                {"detail": "No college linked to this user."},
-                status=status.HTTP_400_BAD_REQUEST
+        # Other authenticated users can see all faculty
+        return Faculty.objects.all()
+    
+    def perform_create(self, serializer):
+        """Create faculty for authenticated college admin's college"""
+        user = self.request.user
+        
+        if not user or not user.is_authenticated or getattr(user, 'user_type', None) != 'college':
+            raise permissions.PermissionDenied(
+                "Only college admins can add faculty members."
             )
+        
+        try:
+            college = user.college_profile
+            serializer.save(college=college)
+        except CollegeProfile.DoesNotExist:
+            raise permissions.PermissionDenied(
+                "You must have a college profile to add faculty members."
+            )
+    
+    def perform_update(self, serializer):
+        """Ensure college admin can only update their own faculty"""
+        user = self.request.user
+        faculty = self.get_object()
+        
+        if faculty.college.user != user:
+            raise permissions.PermissionDenied(
+                "You can only update faculty members from your own college."
+            )
+        
+        serializer.save()
+    
+    def perform_destroy(self, instance):
+        """Ensure college admin can only delete their own faculty"""
+        user = self.request.user
+        
+        if instance.college.user != user:
+            raise permissions.PermissionDenied(
+                "You can only delete faculty members from your own college."
+            )
+        
+        instance.delete()
 
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        serializer.save(college=user_college)   # 🔥 AUTO-SET COLLEGE HERE
-
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+# ===== HOSTEL VIEWSET =====
 
 class HostelListCreateView(generics.ListCreateAPIView):
+    """
+    List and create hostels - College admins can only see/edit their own hostels
+    """
     serializer_class = HostelSerializer
+    permission_classes = [IsCollegeAdminOrReadOnly]
 
     def get_queryset(self):
-        college_id = self.request.query_params.get("college")
-        if college_id:
-            return Hostel.objects.filter(college=college_id)
-        return Hostel.objects.none()  # no random list
+        """
+        Return hostels based on user type:
+        - College admin: Only their own hostels
+        - Other users: All hostels (public view)
+        """
+        user = self.request.user
+        
+        if not user or not user.is_authenticated:
+            return Hostel.objects.all()
+        
+        # If user is a college admin, show only their hostels
+        if getattr(user, 'user_type', None) == 'college':
+            try:
+                college = user.college_profile
+                return Hostel.objects.filter(college=college)
+            except CollegeProfile.DoesNotExist:
+                return Hostel.objects.none()
+        
+        # Other authenticated users can see all hostels
+        return Hostel.objects.all()
+    
+    def perform_create(self, serializer):
+        """Create hostel for authenticated college admin's college"""
+        user = self.request.user
+        
+        if not user or not user.is_authenticated or getattr(user, 'user_type', None) != 'college':
+            raise permissions.PermissionDenied(
+                "Only college admins can create hostels."
+            )
+        
+        try:
+            college = user.college_profile
+            serializer.save(college=college)
+        except CollegeProfile.DoesNotExist:
+            raise permissions.PermissionDenied(
+                "You must have a college profile to create hostels."
+            )
 
 class HostelDetailView(generics.RetrieveUpdateDestroyAPIView):
-    queryset = Hostel.objects.all().order_by("id")
+    """
+    Retrieve, update, and delete hostels - College admins can only edit their own
+    """
+    queryset = Hostel.objects.all()
     serializer_class = HostelSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [IsCollegeAdminOrReadOnly]
+    
+    def perform_update(self, serializer):
+        """Ensure college admin can only update their own hostels"""
+        user = self.request.user
+        hostel = self.get_object()
+        
+        if hostel.college.user != user:
+            raise permissions.PermissionDenied(
+                "You can only update hostels from your own college."
+            )
+        
+        serializer.save()
+    
+    def perform_destroy(self, instance):
+        """Ensure college admin can only delete their own hostels"""
+        user = self.request.user
+        
+        if instance.college.user != user:
+            raise permissions.PermissionDenied(
+                "You can only delete hostels from your own college."
+            )
+        
+        instance.delete()
 
 
 class HostelImageUploadView(APIView):
