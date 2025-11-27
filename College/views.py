@@ -2,7 +2,15 @@ from rest_framework import generics, viewsets,permissions, status, filters
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from .models import Course, CollegeProfile,Event,Gallery,Faculty,Hostel
-from .serializers import CollegeProfileSerializer,CourseSerializer,EventSerializer,GallerySerializer,FacultySerializer,HostelSerializer
+from .serializers import (
+    CollegeProfileSerializer,
+    CourseSerializer,
+    EventSerializer,
+    GallerySerializer,
+    FacultySerializer,
+    HostelSerializer,
+    CollegePublicSerializer,
+)
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.decorators import action
 from django.shortcuts import get_object_or_404
@@ -155,6 +163,25 @@ class CollegeListView(generics.ListAPIView):
         Return distinct colleges to avoid duplicates when filtering by related course fields.
         """
         return CollegeProfile.objects.distinct()
+
+
+
+class CollegePublicDetailView(generics.RetrieveAPIView):
+    """Public read-only detail view for a college.
+
+    URL lookup uses the college's `college_code` so public clients can fetch
+    details like courses, events, gallery, faculties and hostels in one call.
+    """
+    serializer_class = CollegePublicSerializer
+    permission_classes = [permissions.AllowAny]
+    lookup_field = 'college_code'
+    lookup_url_kwarg = 'college_code'
+
+    def get_queryset(self):
+        # optimize related resource fetching for the public detail view
+        return CollegeProfile.objects.select_related('user').prefetch_related(
+            'courses', 'events', 'gallery_items', 'faculties', 'hostels'
+        )
 
 
 class CourseViewSet(viewsets.ModelViewSet):

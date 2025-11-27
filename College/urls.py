@@ -1,8 +1,18 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import (CollegeProfileView, CollegeListView, CourseViewSet, EventViewSet, 
-                    GalleryViewSet, FacultyViewSet, HostelImageUploadView,HostelListCreateView,
-                    HostelDetailView, FilterOptionsAPIView)
+from .views import (
+    CollegeProfileView,
+    CollegeListView,
+    CollegePublicDetailView,
+    CourseViewSet,
+    EventViewSet,
+    GalleryViewSet,
+    FacultyViewSet,
+    HostelImageUploadView,
+    HostelListCreateView,
+    HostelDetailView,
+    FilterOptionsAPIView,
+)
 
 # 🔹 DRF router for viewsets (Courses)
 router = DefaultRouter()
@@ -14,6 +24,8 @@ router.register("faculties", FacultyViewSet, basename="faculties")
 urlpatterns = [
     # 🔹 College list endpoint (with comprehensive filtering)
     path("list/", CollegeListView.as_view(), name="college-list"),
+    # Public college detail - visible to anyone (includes nested resources)
+    path("public/<str:college_code>/", CollegePublicDetailView.as_view(), name="college-public-detail"),
     path("filters/", FilterOptionsAPIView.as_view(), name="filter-options"),
     path("filters/<str:filter_name>/", FilterOptionsAPIView.as_view(), name="single-filter"),
     

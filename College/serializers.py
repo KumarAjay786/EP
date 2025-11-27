@@ -182,3 +182,21 @@ class HostelSerializer(serializers.ModelSerializer):
         model = Hostel
         fields = "__all__"
 
+
+class CollegePublicSerializer(CollegeProfileSerializer):
+    """
+    Public-facing serializer that includes related resources for a college detail view.
+    This nests courses, events, gallery items, faculties and hostels for read-only consumption.
+    """
+    courses = CourseSerializer(many=True, read_only=True)
+    events = EventSerializer(many=True, read_only=True)
+    gallery_items = GallerySerializer(many=True, read_only=True)
+    faculties = FacultySerializer(many=True, read_only=True)
+    hostels = HostelSerializer(many=True, read_only=True)
+
+    class Meta(CollegeProfileSerializer.Meta):
+        # reuse parent fields and add nested resource names
+        fields = CollegeProfileSerializer.Meta.fields + [
+            'courses', 'events', 'gallery_items', 'faculties', 'hostels'
+        ]
+
